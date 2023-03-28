@@ -49,9 +49,10 @@ class ChessPiece(QGraphicsPixmapItem):
         self.y_pos = y_pos
         self.color = color
         self.piece_type = piece_type
+        self.all_pieces = all_pieces
         self.possible_moves = []
         self.move_rects = []
-        self.all_pieces = all_pieces
+        self.first_move = True
         self.setPixmap(QPixmap(f'Pieces/{self.color}_{self.piece_type}.png').scaled(100, 100))
         self.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable)
         self.setPos(self.x_pos, self.y_pos)
@@ -62,7 +63,6 @@ class ChessPiece(QGraphicsPixmapItem):
         self.y_pos = self.pos().y()
         getattr(self, f"{self.piece_type}_movement")()
         self.color_possible_moves()
-        print(self.all_pieces)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -70,6 +70,8 @@ class ChessPiece(QGraphicsPixmapItem):
         y = round(self.pos().y() / 100) * 100
         if 0 <= x <= 700 and 0 <= y <= 700 and (x, y) in self.possible_moves:
             self.setPos(x, y)
+            self.update_pieces(x, y)
+            self.first_move = False
         else:
             self.setPos(self.x_pos, self.y_pos)
 
@@ -77,6 +79,10 @@ class ChessPiece(QGraphicsPixmapItem):
             self.scene().removeItem(move_rect)
 
         super().mouseReleaseEvent(event)
+
+    def update_pieces(self, x, y):
+        piece_index = self.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
+        self.all_pieces[piece_index] = (self.color, self.piece_type, x, y)
 
     def color_possible_moves(self):
         for possible_move in self.possible_moves:
@@ -87,31 +93,42 @@ class ChessPiece(QGraphicsPixmapItem):
             move_rect.setBrush(QColor(255, 255, 0))
             self.scene().addItem(move_rect)
 
+    def del_impossible_moves(self, directions):
+        for piece in self.all_pieces:
+            if (piece[2], piece[3]) in self.possible_moves:
+                start_index = self.possible_moves.index((piece[2], piece[3]))
+                for index in range(start_index, len(self.possible_moves), directions):
+                    self.possible_moves[index] = (-1, -1)
+
     def pawn_movement(self):
         self.move_rects.clear()
         self.possible_moves = [(self.x_pos, self.y_pos+100)]
+        if self.first_move:
+            self.possible_moves.append((self.x_pos, self.y_pos + 200))
+
+        self.del_impossible_moves(10)
 
     def rook_movement(self):
         self.move_rects.clear()
         self.possible_moves.clear()
-        for i in range(8):
+        for i in range(1, 8):
             self.possible_moves.append((self.x_pos + 100 * i, self.y_pos))
             self.possible_moves.append((self.x_pos + 100 * -i, self.y_pos))
             self.possible_moves.append((self.x_pos, self.y_pos + 100 * i))
             self.possible_moves.append((self.x_pos, self.y_pos + 100 * -i))
 
-        for piece in self.all_pieces:
-            if (piece[2], piece[3]) in self.possible_moves:
-                print("he")
+        self.del_impossible_moves(4)
 
     def bishop_movement(self):
         self.move_rects.clear()
         self.possible_moves.clear()
-        for i in range(8):
+        for i in range(1, 8):
             self.possible_moves.append((self.x_pos + 100 * i, self.y_pos + 100 * i))
             self.possible_moves.append((self.x_pos - 100 * i, self.y_pos + 100 * i))
             self.possible_moves.append((self.x_pos + 100 * i, self.y_pos - 100 * i))
             self.possible_moves.append((self.x_pos - 100 * i, self.y_pos - 100 * i))
+
+        self.del_impossible_moves(4)
 
     def knight_movement(self):
         self.move_rects.clear()
@@ -120,10 +137,12 @@ class ChessPiece(QGraphicsPixmapItem):
                                (self.x_pos + 100, self.y_pos + 200), (self.x_pos + 100, self.y_pos - 200),
                                (self.x_pos - 100, self.y_pos + 200), (self.x_pos - 100, self.y_pos - 200)]
 
+        self.del_impossible_moves(10)
+
     def queen_movement(self):
         self.move_rects.clear()
         self.possible_moves.clear()
-        for i in range(8):
+        for i in range(1, 8):
             self.possible_moves.append((self.x_pos + 100 * i, self.y_pos))
             self.possible_moves.append((self.x_pos + 100 * -i, self.y_pos))
             self.possible_moves.append((self.x_pos, self.y_pos + 100 * i))
@@ -133,12 +152,16 @@ class ChessPiece(QGraphicsPixmapItem):
             self.possible_moves.append((self.x_pos + 100 * i, self.y_pos - 100 * i))
             self.possible_moves.append((self.x_pos - 100 * i, self.y_pos - 100 * i))
 
+        self.del_impossible_moves(8)
+
     def king_movement(self):
         self.move_rects.clear()
         self.possible_moves = [(self.x_pos + 100, self.y_pos + 100), (self.x_pos - 100, self.y_pos - 100),
                                (self.x_pos + 100, self.y_pos - 100), (self.x_pos - 100, self.y_pos + 100),
                                (self.x_pos + 100, self.y_pos), (self.x_pos - 100, self.y_pos),
                                (self.x_pos, self.y_pos + 100), (self.x_pos, self.y_pos - 100)]
+
+        self.del_impossible_moves(10)
 
 
 class ChessView(QGraphicsView):
