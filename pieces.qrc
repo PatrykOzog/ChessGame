@@ -1,0 +1,28 @@
+<!DOCTYPE RCC><RCC version="1.0">
+    <qresource>
+        <file>Pieces2/w_bishop.png</file>
+        <file>Pieces2/w_king.png</file>
+        <file>Pieces2/w_knight.png</file>
+        <file>Pieces2/w_pawn.png</file>
+        <file>Pieces2/w_queen.png</file>
+        <file>Pieces2/w_rook.png</file>
+        <file>Pieces2/b_bishop.png</file>
+        <file>Pieces2/b_king.png</file>
+        <file>Pieces2/b_knight.png</file>
+        <file>Pieces2/b_pawn.png</file>
+        <file>Pieces2/b_queen.png</file>
+        <file>Pieces2/b_rook.png</file>
+		<file>Pieces1/w_bishop.png</file>
+        <file>Pieces1/w_king.png</file>
+        <file>Pieces1/w_knight.png</file>
+        <file>Pieces1/w_pawn.png</file>
+        <file>Pieces1/w_queen.png</file>
+        <file>Pieces1/w_rook.png</file>
+        <file>Pieces1/b_bishop.png</file>
+        <file>Pieces1/b_king.png</file>
+        <file>Pieces1/b_knight.png</file>
+        <file>Pieces1/b_pawn.png</file>
+        <file>Pieces1/b_queen.png</file>
+        <file>Pieces1/b_rook.png</file>
+    </qresource>
+</RCC>

@@ -1,9 +1,10 @@
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsRectItem, QApplication, QVBoxLayout, \
     QGraphicsItem, QGraphicsTextItem, QGraphicsPixmapItem, QTextEdit, QDialog, QPushButton, QGraphicsProxyWidget
 from PyQt5.QtGui import QBrush, QColor, QPainter, QPixmap
-from PyQt5.QtCore import Qt, QEvent, QTimer, QTime, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QTimer, QTime, QResource
 import sys
 import numpy as np
+from pieces import *
 
 
 class ChessScene(QGraphicsScene):
@@ -13,20 +14,20 @@ class ChessScene(QGraphicsScene):
         self.b_moved = False
         self.number = 1
         self.seconds = 120
-        self.setSceneRect(0, 0, 1500, 800)
+        self.capture_row = 0
+        self.setSceneRect(0, 0, 1600, 900)
         self.current_turn = "w"
         self.all_pieces = []
         self.pieces_id = []
+        self.special_symbols = {'': 'no_check', '+': 'check'}
+        self.figures_values = {'K': 'king', 'Q': 'queen', 'R': 'rook', 'B': 'bishop', 'N': 'knight', '': 'pawn'}
+        self.row_values = {'a': 0, 'b': 100, 'c': 200, 'd': 300, 'e': 400, 'f': 500, 'g': 600, 'h': 700}
+        self.col_values = {'1': 0, '2': 100, '3': 200, '4': 300, '5': 400, '6': 500, '7': 600, '8': 700}
         self.start_pos = [('b_rook', (0, 0)), ('b_knight', (100, 0)), ('b_bishop', (200, 0)), ('b_queen', (300, 0)),
                           ('b_king', (400, 0)), ('b_bishop', (500, 0)), ('b_knight', (600, 0)), ('b_rook', (700, 0)),
                           ('w_rook', (0, 700)), ('w_knight', (100, 700)), ('w_bishop', (200, 700)),
                           ('w_queen', (300, 700)), ('w_king', (400, 700)), ('w_bishop', (500, 700)),
                           ('w_knight', (600, 700)), ('w_rook', (700, 700))]
-
-        self.row_values = {'a': 0, 'b': 100, 'c': 200, 'd': 300, 'e': 400, 'f': 500, 'g': 600, 'h': 700}
-        self.col_values = {'1': 0, '2': 100, '3': 200, '4': 300, '5': 400, '6': 500, '7': 600, '8': 700}
-        self.figures_values = {'K': 'king', 'Q': 'queen', 'R': 'rook', 'B': 'bishop', 'N': 'knight', '': 'pawn'}
-        self.special_symbols = {'': 'no_check', '+': 'check'}
 
         self.create_starting_board()
 
@@ -234,19 +235,34 @@ class ChessPiece(QGraphicsPixmapItem):
         self.cs = chess_scene
         self.possible_moves = []
         self.move_rects = []
-        self.setPixmap(QPixmap(f'Pieces{self.cs.number}/{self.color}_{self.piece_type}.png').scaled(100, 100))
+        self.setPixmap(QPixmap(f':/Pieces{self.cs.number}/{self.color}_{self.piece_type}.png').scaled(100, 100))
         self.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable)
         self.setPos(self.x_pos, self.y_pos)
         self.setZValue(1)
 
     def move_from_chat(self, index, x, y):
+        to_remove = None
         getattr(self, f"{self.piece_type}_movement")(self.x_pos, self.y_pos)
         if (x, y) in self.possible_moves and not self.uncheck(x, y):
+            # Check for capturing, it was not working so created to_remove and its somehow working
+            for i, piece in enumerate(self.cs.all_pieces):
+                if (piece[2], piece[3]) == (x, y):
+                    self.cs.pieces_id[i].setPos(1500, self.cs.capture_row * 25)
+                    self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
+                    self.cs.capture_row += 1
+                    self.cs.pieces_id[i].setZValue(self.cs.capture_row)
+                    # del self.cs.pieces_id[i]
+                    # del self.cs.all_pieces[i]
+                    to_remove = i
+                    break
             self.cs.pieces_id[index].setPos(x, y)
             self.cs.pieces_id[index].x_pos = x
             self.cs.pieces_id[index].y_pos = y
             self.cs.all_pieces[index] = (self.color, self.piece_type, x, y)
             setattr(self.cs, self.cs.current_turn + "_moved", True)
+
+            del self.cs.pieces_id[to_remove]
+            del self.cs.all_pieces[to_remove]
         else:
             raise ValueError
 
@@ -256,25 +272,41 @@ class ChessPiece(QGraphicsPixmapItem):
             self.x_pos = self.pos().x()
             self.y_pos = self.pos().y()
             self.move_rects.clear()
-            getattr(self, f"{self.piece_type}_movement")(self.x_pos, self.y_pos)
-            self.color_possible_moves()
             self.setZValue(2)
+            getattr(self, f"{self.piece_type}_movement")(self.x_pos, self.y_pos)
+
+            # Color possible moves
+            for possible_move in self.possible_moves:
+                if 0 <= possible_move[0] <= 700 and 0 <= possible_move[1] <= 700:
+                    self.move_rects.append(QGraphicsRectItem(possible_move[0], possible_move[1], 100, 100))
+                    self.move_rects[-1].setBrush(QColor(255, 255, 0))
+                    self.scene().addItem(self.move_rects[-1])
+
         super().mousePressEvent(event)
 
     # Move the figure
     def mouseReleaseEvent(self, event):
         if self.color == self.cs.current_turn and not self.cs.w_moved and not self.cs.b_moved:
+            self.setZValue(1)
             x = round(self.pos().x() / 100) * 100
             y = round(self.pos().y() / 100) * 100
             if 0 <= x <= 700 and 0 <= y <= 700 and (x, y) in self.possible_moves and not self.uncheck(x, y):
+                # Check for capturing
                 for i, piece in enumerate(self.cs.all_pieces):
                     if (piece[2], piece[3]) == (x, y):
-                        self.scene().removeItem(self.cs.pieces_id[i])
+                        self.cs.pieces_id[i].setPos(1500, self.cs.capture_row * 25)
+                        self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
+                        self.cs.capture_row += 1
+                        self.cs.pieces_id[i].setZValue(self.cs.capture_row)
                         del self.cs.pieces_id[i]
                         del self.cs.all_pieces[i]
                         break
+
                 self.setPos(x, y)
-                self.update_pieces(x, y)
+                piece_index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
+                self.cs.all_pieces[piece_index] = (self.color, self.piece_type, x, y)
+                self.x_pos = x
+                self.y_pos = y
                 # Check for promotion
                 if self.piece_type == "pawn" and (y == 0 or y == 700):
                     self.setPos(-1000, -1000)
@@ -286,86 +318,50 @@ class ChessPiece(QGraphicsPixmapItem):
             for move_rect in self.move_rects:
                 self.scene().removeItem(move_rect)
 
-            self.setZValue(1)
         else:
-            pass
             self.setPos(self.x_pos, self.y_pos)
         super().mouseReleaseEvent(event)
 
-    def update_pieces(self, x, y):
-        piece_index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
-        self.cs.all_pieces[piece_index] = (self.color, self.piece_type, x, y)
-        self.x_pos = x
-        self.y_pos = y
-
-    def color_possible_moves(self):
-        for possible_move in self.possible_moves:
-            if 0 <= possible_move[0] <= 700 and 0 <= possible_move[1] <= 700:
-                self.move_rects.append(QGraphicsRectItem(possible_move[0], possible_move[1], 100, 100))
-                self.move_rects[-1].setBrush(QColor(255, 255, 0))
-                self.scene().addItem(self.move_rects[-1])
-
     def del_impossible_moves(self, directions):
         for piece in self.cs.all_pieces:
-            if (piece[2], piece[3]) in self.possible_moves:
-                if piece[0] == self.color:
-                    start_index = self.possible_moves.index((piece[2], piece[3]))
-                    for index in range(start_index, len(self.possible_moves), directions):
-                        self.possible_moves[index] = (-1, -1)
-                else:
-                    start_index = self.possible_moves.index((piece[2], piece[3])) + directions
-                    for index in range(start_index, len(self.possible_moves), directions):
-                        self.possible_moves[index] = (-1, -1)
+            if (piece[2], piece[3]) in self.possible_moves and piece[0] == self.color:
+                start_index = self.possible_moves.index((piece[2], piece[3]))
+                for index in range(start_index, len(self.possible_moves), directions):
+                    self.possible_moves[index] = (-1, -1)
+            elif (piece[2], piece[3]) in self.possible_moves and piece[0] != self.color:
+                start_index = self.possible_moves.index((piece[2], piece[3])) + directions
+                for index in range(start_index, len(self.possible_moves), directions):
+                    self.possible_moves[index] = (-1, -1)
 
     def pawn_movement(self, x, y):
-        if self.color == "b":
-            self.possible_moves = [(x, y + 100)]
-            if y == 100:
-                self.possible_moves.append((x, y + 200))
-            for piece in self.cs.all_pieces:
-                if (piece[2], piece[3]) in self.possible_moves:
-                    index = self.possible_moves.index((piece[2], piece[3]))
+        direction = 1 if self.color == "b" else -1
+        self.possible_moves = [(x, y + direction * 100)]
+        if (y == 100 and self.color == "b") or (y == 600 and self.color == "w"):
+            self.possible_moves.append((x, y + direction * 200))
+        for piece in self.cs.all_pieces:
+            if (piece[2], piece[3]) in self.possible_moves:
+                index = self.possible_moves.index((piece[2], piece[3]))
+                self.possible_moves[index] = (-1, -1)
+                if (piece[2], piece[3]) == (x, y + direction * 100) and (x, y + direction * 200) in self.possible_moves:
+                    index = self.possible_moves.index((x, y + direction * 200))
                     self.possible_moves[index] = (-1, -1)
-                    if (piece[2], piece[3]) == (x, y + 100) and (x, y + 200) in self.possible_moves:
-                        index = self.possible_moves.index((x, y + 200))
-                        self.possible_moves[index] = (-1, -1)
-                if (piece[2], piece[3]) == (x + 100, y + 100) and piece[0] != self.color:
-                    self.possible_moves.append((self.x_pos + 100, self.y_pos + 100))
-                if (piece[2], piece[3]) == (x - 100, y + 100) and piece[0] != self.color:
-                    self.possible_moves.append((x - 100, y + 100))
-        elif self.color == "w":
-            self.possible_moves = [(x, y - 100)]
-            if y == 600:
-                self.possible_moves.append((x, y - 200))
-            for piece in self.cs.all_pieces:
-                if (piece[2], piece[3]) in self.possible_moves:
-                    index = self.possible_moves.index((piece[2], piece[3]))
-                    self.possible_moves[index] = (-1, -1)
-                    if (piece[2], piece[3]) == (x, y - 100) and (x, y - 200) in self.possible_moves:
-                        index = self.possible_moves.index((x, y - 200))
-                        self.possible_moves[index] = (-1, -1)
-                if (piece[2], piece[3]) == (x + 100, y - 100) and piece[0] != self.color:
-                    self.possible_moves.append((x + 100, y - 100))
-                if (piece[2], piece[3]) == (x - 100, y - 100) and piece[0] != self.color:
-                    self.possible_moves.append((x - 100, y - 100))
+            if (piece[2], piece[3]) == (x + direction * 100, y + direction * 100) and piece[0] != self.color:
+                self.possible_moves.append((self.x_pos + direction * 100, self.y_pos + direction * 100))
+            if (piece[2], piece[3]) == (x - direction * 100, y + direction * 100) and piece[0] != self.color:
+                self.possible_moves.append((x - direction * 100, y + direction * 100))
 
     def rook_movement(self, x, y):
         self.possible_moves.clear()
         for i in range(1, 8):
-            self.possible_moves.append((x + 100 * i, y))
-            self.possible_moves.append((x + 100 * -i, y))
-            self.possible_moves.append((x, y + 100 * i))
-            self.possible_moves.append((x, y + 100 * -i))
+            self.possible_moves.extend([(x + 100 * i, y), (x + 100 * -i, y), (x, y + 100 * i), (x, y + 100 * -i)])
 
         self.del_impossible_moves(4)
 
     def bishop_movement(self, x, y):
         self.possible_moves.clear()
         for i in range(1, 8):
-            self.possible_moves.append((x + 100 * i, y + 100 * i))
-            self.possible_moves.append((x - 100 * i, y + 100 * i))
-            self.possible_moves.append((x + 100 * i, y - 100 * i))
-            self.possible_moves.append((x - 100 * i, y - 100 * i))
+            self.possible_moves.extend([(x + 100 * i, y + 100 * i), (x - 100 * i, y + 100 * i),
+                                        (x + 100 * i, y - 100 * i), (x - 100 * i, y - 100 * i)])
 
         self.del_impossible_moves(4)
 
@@ -380,14 +376,10 @@ class ChessPiece(QGraphicsPixmapItem):
     def queen_movement(self, x, y):
         self.possible_moves.clear()
         for i in range(1, 8):
-            self.possible_moves.append((x + 100 * i, y))
-            self.possible_moves.append((x + 100 * -i, y))
-            self.possible_moves.append((x, y + 100 * i))
-            self.possible_moves.append((x, y + 100 * -i))
-            self.possible_moves.append((x + 100 * i, y + 100 * i))
-            self.possible_moves.append((x - 100 * i, y + 100 * i))
-            self.possible_moves.append((x + 100 * i, y - 100 * i))
-            self.possible_moves.append((x - 100 * i, y - 100 * i))
+            self.possible_moves.extend([(x + 100 * i, y), (x + 100 * -i, y),
+                                        (x, y + 100 * i), (x, y + 100 * -i),
+                                        (x + 100 * i, y + 100 * i), (x - 100 * i, y + 100 * i),
+                                        (x + 100 * i, y - 100 * i), (x - 100 * i, y - 100 * i)])
 
         self.del_impossible_moves(8)
 
@@ -403,31 +395,19 @@ class ChessPiece(QGraphicsPixmapItem):
         index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
         self.cs.all_pieces[index] = (self.color, self.piece_type, x, y)
         king_pos = [pos for pos in self.cs.all_pieces if pos[1] == 'king' and pos[0] == self.cs.current_turn]
-        if self.cs.current_turn == "b":
-            self.color = "w"
-            self.cs.current_turn = "w"
-        elif self.cs.current_turn == "w":
-            self.color = "b"
-            self.cs.current_turn = "b"
+        self.color = "w" if self.cs.current_turn == "b" else "b"
+        self.cs.current_turn = "w" if self.cs.current_turn == "b" else "b"
         for piece in self.cs.all_pieces:
             if piece[0] == self.cs.current_turn and (piece[2], piece[3]) != (x, y):
                 getattr(self, f"{piece[1]}_movement")(piece[2], piece[3])
                 if (king_pos[0][2], king_pos[0][3]) in self.possible_moves:
-                    if self.cs.current_turn == "b":
-                        self.color = "w"
-                        self.cs.current_turn = "w"
-                    elif self.cs.current_turn == "w":
-                        self.color = "b"
-                        self.cs.current_turn = "b"
+                    self.color = "w" if self.cs.current_turn == "b" else "b"
+                    self.cs.current_turn = "w" if self.cs.current_turn == "b" else "b"
                     self.cs.all_pieces[index] = (self.color, self.piece_type, self.x_pos, self.y_pos)
                     return True
 
-        if self.cs.current_turn == "b":
-            self.color = "w"
-            self.cs.current_turn = "w"
-        elif self.cs.current_turn == "w":
-            self.color = "b"
-            self.cs.current_turn = "b"
+        self.color = "w" if self.cs.current_turn == "b" else "b"
+        self.cs.current_turn = "w" if self.cs.current_turn == "b" else "b"
         self.cs.all_pieces[index] = (self.color, self.piece_type, self.x_pos, self.y_pos)
         return False
 
@@ -441,6 +421,7 @@ class ChessView(QGraphicsView):
 
 
 if __name__ == '__main__':
+    QResource.registerResource('pieces.qrc')
     app = QApplication(sys.argv)
     view = ChessView()
     view.show()
