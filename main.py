@@ -235,6 +235,7 @@ class ChessPiece(QGraphicsPixmapItem):
         self.cs = chess_scene
         self.possible_moves = []
         self.move_rects = []
+        self.first_move = True
         self.setPixmap(QPixmap(f':/Pieces{self.cs.number}/{self.color}_{self.piece_type}.png').scaled(100, 100))
         self.setFlags(QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemIsMovable)
         self.setPos(self.x_pos, self.y_pos)
@@ -291,6 +292,12 @@ class ChessPiece(QGraphicsPixmapItem):
             x = round(self.pos().x() / 100) * 100
             y = round(self.pos().y() / 100) * 100
             if 0 <= x <= 700 and 0 <= y <= 700 and (x, y) in self.possible_moves and not self.uncheck(x, y):
+                # Castling
+                if self.piece_type == "king" and (self.color, "rook", x, y) in self.cs.all_pieces:
+                    index = self.cs.all_pieces.index((self.color, "rook", x, y))
+                    self.cs.all_pieces[index] = (self.color, "rook", self.x_pos, self.y_pos)
+                    self.cs.pieces_id[index].setPos(self.x_pos, self.y_pos)
+
                 # Check for capturing
                 for i, piece in enumerate(self.cs.all_pieces):
                     if (piece[2], piece[3]) == (x, y):
@@ -390,6 +397,11 @@ class ChessPiece(QGraphicsPixmapItem):
                                (x, y + 100), (x, y - 100)]
 
         self.del_impossible_moves(10)
+
+        dx, dy = 400, 700 if self.color == "w" else 100
+        if (self.color, self.piece_type, dx, dy) in self.cs.all_pieces and (self.color, "rook", dx + 300, dy) in self.cs.all_pieces:
+            if not any(piece[2:4] in ((500, 700), (600, 700)) for piece in self.cs.all_pieces):
+                self.possible_moves.append((700, 700))
 
     def uncheck(self, x, y):
         index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
