@@ -1,10 +1,91 @@
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsRectItem, QApplication, QVBoxLayout, \
-    QGraphicsItem, QGraphicsTextItem, QGraphicsPixmapItem, QTextEdit, QDialog, QPushButton, QGraphicsProxyWidget
-from PyQt5.QtGui import QBrush, QColor, QPainter, QPixmap
-from PyQt5.QtCore import Qt, QEvent, QTimer, QTime, QResource
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsRectItem, QApplication, QVBoxLayout, QWidget, \
+    QGraphicsItem, QGraphicsTextItem, QGraphicsPixmapItem, QTextEdit, QDialog, QPushButton, QGraphicsProxyWidget, QMessageBox
+from PyQt5.QtGui import QBrush, QColor, QPainter, QPixmap, QPolygon
+from PyQt5.QtCore import Qt, QEvent, QTimer, QResource, QPoint
 import sys
 import numpy as np
 from pieces import *
+
+
+class AnalogClock(QWidget):
+    millisecHand = QPolygon([
+        QPoint(7, 8),
+        QPoint(-7, 8),
+        QPoint(0, -95)
+    ])
+    minuteHand = QPolygon([
+        QPoint(7, 8),
+        QPoint(-7, 8),
+        QPoint(0, -50)
+    ])
+    secondHand = QPolygon([
+        QPoint(7, 8),
+        QPoint(-7, 8),
+        QPoint(0, -70)
+    ])
+    millisecColor = QColor(195, 0, 0, 150)
+    secondColor = QColor(0, 100, 250, 200)
+    minuteColor = QColor(127, 0, 127)
+
+    def __init__(self, color, parent=None):
+        super(AnalogClock, self).__init__(parent)
+        self.color = color
+        self.timer = QTimer(self)
+        self.msgBox = QMessageBox()
+        self.timer.setInterval(1)
+        self.timer.timeout.connect(self.update)
+        self.time_left = 300 * 1000
+
+    def paintEvent(self, event):
+        side = min(self.width(), self.height())
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.scale(side / 200, side / 200)
+        for i in range(60):
+            if (i % 5) == 0:
+                painter.drawLine(88, 0, 96, 0)
+            else:
+                painter.drawLine(92, 0, 96, 0)
+            painter.rotate(6.0)
+
+        if self.time_left <= 0:
+            self.timer.stop()
+            text = "Black won!" if self.color == "w" else "White won!"
+            self.msgBox.setText(text)
+            self.msgBox.setWindowTitle("Time's up!")
+            self.msgBox.exec()
+            sys.exit()
+        else:
+            self.time_left -= 1
+
+        minutes = self.time_left / 60000
+        seconds = self.time_left / 1000 % 60
+        milliseconds = self.time_left % 1000
+
+        # Milliseconds
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(AnalogClock.millisecColor)
+        painter.save()
+        painter.rotate(360 / 1000 * (1000 - milliseconds))
+        painter.drawConvexPolygon(AnalogClock.millisecHand)
+        painter.restore()
+
+        # Seconds
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(AnalogClock.secondColor)
+        painter.save()
+        painter.rotate(6 * (60 - seconds))
+        painter.drawConvexPolygon(AnalogClock.secondHand)
+        painter.restore()
+
+        # Minutes
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(AnalogClock.minuteColor)
+        painter.save()
+        painter.rotate(6 * (60 - minutes))
+        painter.drawConvexPolygon(AnalogClock.minuteHand)
+        painter.restore()
 
 
 class ChessScene(QGraphicsScene):
@@ -13,7 +94,6 @@ class ChessScene(QGraphicsScene):
         self.w_moved = False
         self.b_moved = False
         self.number = 1
-        self.seconds = 120
         self.capture_row = 0
         self.setSceneRect(0, 0, 1600, 900)
         self.current_turn = "w"
@@ -38,49 +118,37 @@ class ChessScene(QGraphicsScene):
         self.textedit.installEventFilter(self)
         self.addWidget(self.textedit)
 
-        # White timer
-        self.w_timer_widget = QTextEdit()
-        self.w_timer_widget.setGeometry(1000, 200, 150, 50)
-        self.w_timer_widget.setFontPointSize(20)
-        self.w_timer_widget.setReadOnly(True)
-        self.addWidget(self.w_timer_widget)
-        self.w_timer = QTimer(self)
-        self.w_timer.setInterval(1)
-        self.w_timer.timeout.connect(self.update_timer)
-        self.w_time_left = self.seconds * 1000 + 1
-        self.update_timer()
-        self.w_timer.start()
+        # White clock
+        self.w_clock = AnalogClock("w")
+        self.w_clock.setGeometry(850, 100, 300, 300)
+        self.addWidget(self.w_clock)
+
+        # Black clock
+        self.b_clock = AnalogClock("b")
+        self.b_clock.setGeometry(1200, 100, 300, 300)
+        self.addWidget(self.b_clock)
 
         # White button
         self.w_button = QPushButton("White button")
-        self.w_button.setGeometry(1000, 100, 150, 50)
+        self.w_button.setGeometry(850, 50, 300, 50)
         self.w_button.setStyleSheet("font-size: 16px;")
         self.w_button_proxy = QGraphicsProxyWidget()
         self.w_button_proxy.setWidget(self.w_button)
         self.addItem(self.w_button_proxy)
         self.w_button.clicked.connect(self.w_button_clicked)
 
-        # Black timer
-        self.b_timer_widget = QTextEdit()
-        self.b_timer_widget.setGeometry(1200, 200, 150, 50)
-        self.b_timer_widget.setFontPointSize(20)
-        self.b_timer_widget.setReadOnly(True)
-        self.addWidget(self.b_timer_widget)
-        self.b_timer = QTimer(self)
-        self.b_timer.setInterval(1)
-        self.b_timer.timeout.connect(self.update_timer)
-        self.b_time_left = self.seconds * 1000 + 1
-        self.update_timer()
-
         # Black button
         self.b_button = QPushButton("Black button")
-        self.b_button.setGeometry(1200, 100, 150, 50)
+        self.b_button.setGeometry(1200, 50, 300, 50)
         self.b_button.setStyleSheet("font-size: 16px;")
         self.b_button_proxy = QGraphicsProxyWidget()
         self.b_button_proxy.setWidget(self.b_button)
         self.addItem(self.b_button_proxy)
         self.b_button.clicked.connect(self.b_button_clicked)
 
+        self.w_clock.timer.start()
+
+    # Promotion choice
     def open_new_window(self, color, x, y):
         self.dialog = QDialog()
         self.dialog.setModal(False)
@@ -120,33 +188,20 @@ class ChessScene(QGraphicsScene):
         self.addItem(piece)
         self.dialog.accept()
 
+    # Turn changing buttons
     def w_button_clicked(self):
         if (self.w_moved or self.b_moved) and self.current_turn == "w":
-            self.w_timer.stop()
-            self.b_timer.start()
+            self.w_clock.timer.stop()
+            self.b_clock.timer.start()
             self.current_turn = "b"
             self.w_moved = False
 
     def b_button_clicked(self):
         if (self.w_moved or self.b_moved) and self.current_turn == "b":
-            self.b_timer.stop()
-            self.w_timer.start()
+            self.b_clock.timer.stop()
+            self.w_clock.timer.start()
             self.current_turn = "w"
             self.b_moved = False
-
-    def update_timer(self):
-        time_left = getattr(self, self.current_turn + "_time_left")
-        timer = getattr(self, self.current_turn + "_timer")
-        timer_widget = getattr(self, self.current_turn + "_timer_widget")
-        setattr(self, self.current_turn + "_time_left", time_left - 1)
-        if time_left < 0:
-            timer.stop()
-        else:
-            minutes = time_left // 60000
-            seconds = (time_left // 1000) % 60
-            millisecs = time_left % 1000
-            time_str = QTime(0, minutes, seconds, millisecs).toString('mm:ss.zzz')
-            timer_widget.setText(time_str)
 
     # When enter is clicked
     def eventFilter(self, obj, event):
@@ -248,7 +303,7 @@ class ChessPiece(QGraphicsPixmapItem):
             # Check for capturing, it was not working so created to_remove and its somehow working
             for i, piece in enumerate(self.cs.all_pieces):
                 if (piece[2], piece[3]) == (x, y):
-                    self.cs.pieces_id[i].setPos(1500, self.cs.capture_row * 25)
+                    self.cs.pieces_id[i].setPos(1600, self.cs.capture_row * 25)
                     self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
                     self.cs.capture_row += 1
                     self.cs.pieces_id[i].setZValue(self.cs.capture_row)
@@ -293,15 +348,22 @@ class ChessPiece(QGraphicsPixmapItem):
             y = round(self.pos().y() / 100) * 100
             if 0 <= x <= 700 and 0 <= y <= 700 and (x, y) in self.possible_moves and not self.uncheck(x, y):
                 # Castling
-                if self.piece_type == "king" and (self.color, "rook", x, y) in self.cs.all_pieces:
-                    index = self.cs.all_pieces.index((self.color, "rook", x, y))
-                    self.cs.all_pieces[index] = (self.color, "rook", self.x_pos, self.y_pos)
-                    self.cs.pieces_id[index].setPos(self.x_pos, self.y_pos)
+                dx = 100 if x - self.x_pos > 0 else -100
+                castling_moves = [(self.color, "rook", x + 100, y), (self.color, "rook", x - 200, y)]
+                for move in castling_moves:
+                    if self.piece_type == "king" and move in self.cs.all_pieces:
+                        index = self.cs.all_pieces.index(move)
+                        rook = self.cs.pieces_id[index]
+                        if self.first_move and rook.first_move:
+                            rook.setPos(self.x_pos + dx, self.y_pos)
+                            rook.x_pos = self.x_pos + dx
+                            rook.y_pos = self.y_pos
+                            self.cs.all_pieces[index] = (self.color, "rook", self.x_pos + dx, self.y_pos)
 
                 # Check for capturing
                 for i, piece in enumerate(self.cs.all_pieces):
-                    if (piece[2], piece[3]) == (x, y):
-                        self.cs.pieces_id[i].setPos(1500, self.cs.capture_row * 25)
+                    if (piece[2], piece[3]) == (x, y) and piece[0] != self.color:
+                        self.cs.pieces_id[i].setPos(1600, self.cs.capture_row * 25)
                         self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
                         self.cs.capture_row += 1
                         self.cs.pieces_id[i].setZValue(self.cs.capture_row)
@@ -310,6 +372,7 @@ class ChessPiece(QGraphicsPixmapItem):
                         break
 
                 self.setPos(x, y)
+                self.first_move = False
                 piece_index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
                 self.cs.all_pieces[piece_index] = (self.color, self.piece_type, x, y)
                 self.x_pos = x
@@ -398,10 +461,13 @@ class ChessPiece(QGraphicsPixmapItem):
 
         self.del_impossible_moves(10)
 
-        dx, dy = 400, 700 if self.color == "w" else 100
-        if (self.color, self.piece_type, dx, dy) in self.cs.all_pieces and (self.color, "rook", dx + 300, dy) in self.cs.all_pieces:
-            if not any(piece[2:4] in ((500, 700), (600, 700)) for piece in self.cs.all_pieces):
-                self.possible_moves.append((700, 700))
+        dx, dy = 400, 700 if self.color == "w" else 0
+        if (self.color, self.piece_type, dx, dy) in self.cs.all_pieces and (self.color, "rook", dx + 300, dy) in self.cs.all_pieces and self.first_move:
+            if not any(piece[2:4] in ((500, dy), (600, dy)) for piece in self.cs.all_pieces):
+                self.possible_moves.append((dx + 200, dy))
+        if (self.color, self.piece_type, dx, dy) in self.cs.all_pieces and (self.color, "rook", dx - 400, dy) in self.cs.all_pieces and self.first_move:
+            if not any(piece[2:4] in ((300, dy), (200, dy), (100, dy)) for piece in self.cs.all_pieces):
+                self.possible_moves.append((dx - 200, dy))
 
     def uncheck(self, x, y):
         index = self.cs.all_pieces.index((self.color, self.piece_type, self.x_pos, self.y_pos))
