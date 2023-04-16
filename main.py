@@ -1,15 +1,17 @@
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsRectItem, QApplication, QVBoxLayout, QWidget, \
     QGraphicsItem, QGraphicsTextItem, QGraphicsPixmapItem, QTextEdit, QDialog, QPushButton, QGraphicsProxyWidget, \
-    QMessageBox, QHBoxLayout, QRadioButton, QLineEdit, QTableWidgetItem
+    QMessageBox, QRadioButton, QLineEdit, QLabel, QButtonGroup
 from PyQt5.QtGui import QBrush, QColor, QPainter, QPixmap, QPolygon
-from PyQt5.QtCore import Qt, QEvent, QTimer, QResource, QPoint
+from PyQt5.QtCore import Qt, QEvent, QTimer, QResource, QPoint, QEventLoop
 import sys
 import numpy as np
 import socket
 import threading
-import json
 import sqlite3
+import xml.etree.ElementTree as ET
+import xml.dom.minidom
 from datetime import datetime
+import json
 from pieces import *
 
 
@@ -124,18 +126,23 @@ class ChessScene(QGraphicsScene):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.server_connection = None
+        self.game_mode = None
+        self.ip_address = None
+        self.port = None
         self.w_moved = False
         self.b_moved = False
-        self.number = 1
+        self.number = None
         self.capture_row = 0
         self.setSceneRect(0, 0, 1600, 900)
         self.current_turn = "w"
         self.all_pieces = []
         self.pieces_id = []
+        self.game_history = []
         self.conn = sqlite3.connect('chess.db')
         self.cursor = self.conn.cursor()
+        # self.cursor.execute("DROP TABLE moves")
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS moves
-                            (id INTEGER PRIMARY KEY, player TEXT, from_square TEXT, to_square TEXT, timestamp TEXT)''')
+                            (id INTEGER PRIMARY KEY, player TEXT, figure TEXT, from_square TEXT, to_square TEXT, timestamp TEXT)''')
         self.figures_values = {'K': 'king', 'Q': 'queen', 'R': 'rook', 'B': 'bishop', 'N': 'knight', '': 'pawn'}
         self.row_values = {'a': 0, 'b': 100, 'c': 200, 'd': 300, 'e': 400, 'f': 500, 'g': 600, 'h': 700,
                            0: 'a', 100: 'b', 200: 'c', 300: 'd', 400: 'e', 500: 'f', 600: 'g', 700: 'h'}
@@ -147,33 +154,36 @@ class ChessScene(QGraphicsScene):
                           ('w_queen', (300, 700)), ('w_king', (400, 700)), ('w_bishop', (500, 700)),
                           ('w_knight', (600, 700)), ('w_rook', (700, 700))]
 
+        self.open_starting_window()
+
         self.create_starting_board()
 
-        # Radio buttons
-        widget = QWidget()
-        layout = QHBoxLayout()
-        widget.setLayout(layout)
-        radio_button1 = QRadioButton("1 gracz")
-        radio_button2 = QRadioButton("2 graczy")
-        radio_button3 = QRadioButton("AI")
-        radio_button1.clicked.connect(self.radio_button1_clicked)
-        radio_button2.clicked.connect(self.radio_button2_clicked)
-        radio_button3.clicked.connect(self.radio_button3_clicked)
-        layout.addWidget(radio_button1)
-        layout.addWidget(radio_button2)
-        layout.addWidget(radio_button3)
-        widget.setGeometry(1000, 700, 0, 0)
-        proxy = QGraphicsProxyWidget()
-        proxy.setWidget(widget)
-        self.addItem(proxy)
+        # Playback
+        self.playback_button = QPushButton("Playback")
+        self.playback_button.setGeometry(1000, 750, 350, 50)
+        self.playback_button.setStyleSheet("font-size: 16px;")
+        self.playback_button_proxy = QGraphicsProxyWidget()
+        self.playback_button_proxy.setWidget(self.playback_button)
+        self.addItem(self.playback_button_proxy)
+        self.playback_button.clicked.connect(self.playback)
 
-        # Create the line edit and hide it initially
-        self.line_edit = QLineEdit()
-        self.line_edit.setPlaceholderText("Adres IP:Port")
-        self.line_edit.setGeometry(1000, 750, 190, 30)
-        self.line_edit.setVisible(False)
-        self.line_edit.returnPressed.connect(self.handle_line_edit)
-        self.addWidget(self.line_edit)
+        # Save to xml
+        self.xml_button = QPushButton("Save history to xml")
+        self.xml_button.setGeometry(1000, 800, 350, 50)
+        self.xml_button.setStyleSheet("font-size: 16px;")
+        self.xml_button_proxy = QGraphicsProxyWidget()
+        self.xml_button_proxy.setWidget(self.xml_button)
+        self.addItem(self.xml_button_proxy)
+        self.xml_button.clicked.connect(self.save_to_xml)
+
+        # Save to json
+        self.json_button = QPushButton("Save settings to json")
+        self.json_button.setGeometry(1000, 850, 350, 50)
+        self.json_button.setStyleSheet("font-size: 16px;")
+        self.json_button_proxy = QGraphicsProxyWidget()
+        self.json_button_proxy.setWidget(self.json_button)
+        self.addItem(self.json_button_proxy)
+        self.json_button.clicked.connect(self.save_to_json)
 
         # Text box
         self.textedit = QTextEdit()
@@ -212,27 +222,184 @@ class ChessScene(QGraphicsScene):
 
         self.w_clock.timer.start()
 
-    def radio_button1_clicked(self):
-        print('1 Player')
-        self.line_edit.setVisible(False)
+    def open_starting_window(self):
+        self.dialog = QDialog()
+        self.dialog.setModal(False)
+        self.dialog.setGeometry(500, 500, 500, 300)
+        layout = QVBoxLayout()
 
-    def radio_button2_clicked(self):
-        print('2 Players')
-        self.line_edit.setVisible(True)
+        group1 = QButtonGroup()
+        group2 = QButtonGroup()
+
+        # Radio buttons
+        radio_button1 = QRadioButton("1 gracz")
+        radio_button2 = QRadioButton("2 graczy")
+        radio_button3 = QRadioButton("AI")
+        radio_button1.clicked.connect(lambda: self.radio_button_clicked("1_player"))
+        radio_button2.clicked.connect(lambda: self.radio_button_clicked("2_players"))
+        radio_button3.clicked.connect(lambda: self.radio_button_clicked("AI"))
+        group1.addButton(radio_button1)
+        group1.addButton(radio_button2)
+        group1.addButton(radio_button3)
+        layout.addWidget(radio_button1)
+        layout.addWidget(radio_button2)
+        layout.addWidget(radio_button3)
+
+        # Add image
+        pixmap = QPixmap('Choice.png')
+        label = QLabel()
+        label.setPixmap(pixmap)
+        layout.addWidget(label)
+
+        radio_button4 = QRadioButton("Number 1")
+        radio_button5 = QRadioButton("Number 2")
+        radio_button4.clicked.connect(lambda: self.radio_button_clicked(1))
+        radio_button5.clicked.connect(lambda: self.radio_button_clicked(2))
+        group2.addButton(radio_button4)
+        group2.addButton(radio_button5)
+        layout.addWidget(radio_button4)
+        layout.addWidget(radio_button5)
+
+        # Create the line edit
+        self.line_edit = QLineEdit()
+        self.line_edit.setPlaceholderText("Adres IP:Port")
+        layout.addWidget(self.line_edit)
+
+        connect_button = QPushButton("Connect")
+        connect_button.clicked.connect(self.connect_button_clicked)
+        layout.addWidget(connect_button)
+
+        load_button = QPushButton("Load from Json")
+        load_button.clicked.connect(self.load_from_json)
+        layout.addWidget(load_button)
+
+        accept_button = QPushButton("Accept")
+        accept_button.clicked.connect(self.accept_button_clicked)
+        layout.addWidget(accept_button)
+
+        def closeEvent(event):
+            event.ignore()
+
+        self.dialog.closeEvent = closeEvent
+        self.dialog.setLayout(layout)
+        self.dialog.exec()
+
+    def connect_button_clicked(self):
         if self.server_connection is not None:
             self.server_connection.client_socket.close()
-
-    def radio_button3_clicked(self):
-        print('AI')
-        self.line_edit.setVisible(False)
-
-    def handle_line_edit(self):
         try:
-            ip_address, port = self.line_edit.text().split(':')
-            self.line_edit.setVisible(False)
-            self.server_connection = ServerConnect(self, ip_address, int(port))
+            self.ip_address, self.port = self.line_edit.text().split(':')
+            self.server_connection = ServerConnect(self, self.ip_address, int(self.port))
         except Exception as e:
             print(e)
+
+    def accept_button_clicked(self):
+        if self.game_mode is not None and self.number is not None:
+            print(self.game_mode)
+            self.dialog.accept()
+
+    def radio_button_clicked(self, choice):
+        if choice == "1_player" or choice == "AI" or (choice == "2_players" and self.server_connection is not None):
+            self.game_mode = choice
+        if choice == 1 or choice == 2:
+            self.number = choice
+
+    def save_to_json(self):
+        options = {
+            "Game mode": self.game_mode,
+            "Skin number": self.number,
+            "IP": self.ip_address,
+            "Port": self.port
+        }
+
+        with open("options.json", "w") as f:
+            json.dump(options, f, indent=4)
+
+    def load_from_json(self):
+        with open('options.json') as f:
+            data = json.load(f)
+
+        self.game_mode = data['Game mode']
+        self.number = data['Skin number']
+        self.line_edit.setText(f"{data['IP']}:{data['Port']}")
+
+    def save_to_xml(self):
+        root = ET.Element("game")
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for all_pieces in self.game_history:
+            move_section = ET.SubElement(root, "move_section")
+            for piece in all_pieces:
+                square = ''.join([self.row_values[piece[2]], self.col_values[piece[3]]])
+                move_elem = ET.SubElement(move_section, "move")
+                move_elem.set("player", piece[0])
+                move_elem.set("square", square)
+                move_elem.set("type", piece[1])
+                move_elem.set("timestamp", timestamp)
+
+        xml_str = ET.tostring(root, encoding="utf-8")
+        xml_dom = xml.dom.minidom.parseString(xml_str)
+        pretty_xml_str = xml_dom.toprettyxml()
+
+        with open("game_history.xml", "w") as f:
+            f.write(pretty_xml_str)
+
+    def playback(self):
+        self.w_clock.timer.stop() if self.current_turn == "w" else self.b_clock.timer.stop()
+        for piece in self.pieces_id:
+            self.removeItem(piece)
+
+        temp_all_pieces = self.all_pieces
+        self.pieces_id = []
+        self.all_pieces = []
+
+        for i in range(8):
+            # Create black pawns
+            piece = ChessPiece('b', 'pawn', i * 100, 100, self)
+            self.all_pieces.append(('b', 'pawn', i * 100, 100))
+            self.pieces_id.append(piece)
+            self.addItem(piece)
+
+            # Create white pawns
+            piece = ChessPiece('w', 'pawn', i * 100, 600, self)
+            self.all_pieces.append(('w', 'pawn', i * 100, 600))
+            self.pieces_id.append(piece)
+            self.addItem(piece)
+
+        for name, pos in self.start_pos:
+            piece = ChessPiece(name.split('_')[0], name.split('_')[1], pos[0], pos[1], self)
+            self.all_pieces.append((name.split('_')[0], name.split('_')[1], pos[0], pos[1]))
+            self.pieces_id.append(piece)
+            self.addItem(piece)
+
+        self.cursor.execute("SELECT * FROM moves")
+        result = self.cursor.fetchall()
+        for row in result:
+            x_pos = self.row_values[row[3][-2:-1]]
+            y_pos = self.col_values[row[3][-1]]
+            stop_x = self.row_values[row[4][0]]
+            stop_y = self.col_values[row[4][1]]
+            index = self.all_pieces.index((row[1], row[2], x_pos, y_pos))
+
+            timer = QTimer(self)
+            event_loop = QEventLoop()
+            timer.timeout.connect(lambda: event_loop.exit())
+            timer.setSingleShot(True)
+            timer.start(1000)
+            event_loop.exec()
+
+            self.pieces_id[index].x_pos = stop_x
+            self.pieces_id[index].y_pos = stop_y
+            self.pieces_id[index].setPos(stop_x, stop_y)
+            self.all_pieces[index] = (row[1], row[2], stop_x, stop_y)
+
+            for i, piece in enumerate(self.all_pieces):
+                if (piece[2], piece[3]) == (stop_x, stop_y) and i != index:
+                    self.pieces_id[i].setPos(-1000, -1000)
+                    del self.pieces_id[i]
+                    del self.all_pieces[i]
+                    break
+
+        self.w_clock.timer.start() if self.current_turn == "w" else self.b_clock.timer.start()
 
     # Promotion choice
     def open_new_window(self, color, x, y):
@@ -353,14 +520,16 @@ class ChessScene(QGraphicsScene):
             self.pieces_id.append(piece)
             self.addItem(piece)
 
-    # Change skin by double clicking
-    def mouseDoubleClickEvent(self, event):
-        self.number = 2 if self.number == 1 else 1
-        for i, piece in enumerate(self.all_pieces):
-            self.removeItem(self.pieces_id[i])
-            new_piece = ChessPiece(piece[0], piece[1], piece[2], piece[3], self)
-            self.pieces_id[i] = new_piece
-            self.addItem(new_piece)
+        self.game_history.append(self.all_pieces)
+
+    # # Change skin by double clicking
+    # def mouseDoubleClickEvent(self, event):
+    #     self.number = 2 if self.number == 1 else 1
+    #     for i, piece in enumerate(self.all_pieces):
+    #         self.removeItem(self.pieces_id[i])
+    #         new_piece = ChessPiece(piece[0], piece[1], piece[2], piece[3], self)
+    #         self.pieces_id[i] = new_piece
+    #         self.addItem(new_piece)
 
 
 class ChessPiece(QGraphicsPixmapItem):
@@ -383,26 +552,24 @@ class ChessPiece(QGraphicsPixmapItem):
         to_remove = None
         getattr(self, f"{self.piece_type}_movement")(self.x_pos, self.y_pos)
         if (x, y) in self.possible_moves and not self.uncheck(x, y):
-            # Check for capturing, it was not working so created to_remove and its somehow working
-            for i, piece in enumerate(self.cs.all_pieces):
-                if (piece[2], piece[3]) == (x, y):
-                    self.cs.pieces_id[i].setPos(1600, self.cs.capture_row * 25)
-                    self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
-                    self.cs.capture_row += 1
-                    self.cs.pieces_id[i].setZValue(self.cs.capture_row)
-                    # del self.cs.pieces_id[i]
-                    # del self.cs.all_pieces[i]
-                    to_remove = i
-                    break
             self.save_to_sql(part_one[-2:], part_two[-2:])
             self.cs.pieces_id[index].setPos(x, y)
             self.cs.pieces_id[index].x_pos = x
             self.cs.pieces_id[index].y_pos = y
             self.cs.all_pieces[index] = (self.color, self.piece_type, x, y)
-            setattr(self.cs, self.cs.current_turn + "_moved", True)
+            # Check for capturing
+            for i, piece in enumerate(self.cs.all_pieces):
+                if (piece[2], piece[3]) == (x, y) and i != index:
+                    self.cs.pieces_id[i].setPos(1600, self.cs.capture_row * 25)
+                    self.cs.pieces_id[i].setFlags(QGraphicsItem.ItemIgnoresTransformations)
+                    self.cs.capture_row += 1
+                    self.cs.pieces_id[i].setZValue(self.cs.capture_row)
+                    del self.cs.pieces_id[i]
+                    del self.cs.all_pieces[i]
+                    break
 
-            del self.cs.pieces_id[to_remove]
-            del self.cs.all_pieces[to_remove]
+            setattr(self.cs, self.cs.current_turn + "_moved", True)
+            self.cs.game_history.append(self.cs.all_pieces)
         else:
             raise ValueError
 
@@ -469,6 +636,7 @@ class ChessPiece(QGraphicsPixmapItem):
                     self.setPos(-1000, -1000)
                     self.cs.open_new_window(self.color, self.x_pos, self.y_pos)
                 setattr(self.cs, self.cs.current_turn + "_moved", True)
+                self.cs.game_history.append(self.cs.all_pieces)
             else:
                 self.setPos(self.x_pos, self.y_pos)
 
@@ -482,8 +650,8 @@ class ChessPiece(QGraphicsPixmapItem):
     def save_to_sql(self, from_square, to_square):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.cs.cursor.execute(
-            "INSERT INTO moves (player, from_square, to_square, timestamp) VALUES (?, ?, ?, ?)",
-            (self.color, from_square, to_square, timestamp))
+            "INSERT INTO moves (player, figure, from_square, to_square, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (self.color, self.piece_type, from_square, to_square, timestamp))
         self.cs.cursor.execute("SELECT * FROM moves")
         result = self.cs.cursor.fetchall()
         print(result[-1])
